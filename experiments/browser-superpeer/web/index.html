@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LBRY blob superpeer — browser MVP</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --text: #e7ecf3;
+      --muted: #9aa8bc;
+      --accent: #3d9cf0;
+      --ok: #3ecf8e;
+      --err: #f07178;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+    h1 { font-size: 1.45rem; margin: 0 0 0.35rem; }
+    .sub { color: var(--muted); margin-bottom: 1.5rem; font-size: 0.95rem; }
+    .card {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 1.25rem 1.35rem;
+      margin-bottom: 1rem;
+      border: 1px solid #2a3548;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin: 0.75rem 0 0.3rem;
+    }
+    input, textarea {
+      width: 100%;
+      background: #0d121a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: var(--text);
+      padding: 0.6rem 0.75rem;
+      font: inherit;
+    }
+    textarea { min-height: 5.5rem; resize: vertical; font-family: ui-monospace, monospace; font-size: 0.8rem; }
+    button {
+      margin-top: 1rem;
+      background: var(--accent);
+      color: #041018;
+      border: none;
+      border-radius: 8px;
+      padding: 0.65rem 1.1rem;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    .status { margin-top: 1rem; white-space: pre-wrap; font-size: 0.9rem; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--err); }
+    video, audio { width: 100%; margin-top: 1rem; border-radius: 8px; background: #000; }
+    code { font-size: 0.85em; color: #c5d4e8; }
+    ul { color: var(--muted); padding-left: 1.2rem; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>LBRY blobs over Iroh</h1>
+    <p class="sub">
+      Browser end-user demo. The companion talks Iroh to a <strong>download superpeer</strong>
+      (not an upload reflector). Blobs stay LBRY-shaped (SHA-384 + AES-CBC). No blockchain required.
+    </p>
+
+    <div class="card">
+      <label for="ticket">Superpeer ticket</label>
+      <textarea id="ticket" placeholder="Paste ticket printed by: cargo run -- superpeer"></textarea>
+
+      <label for="sd">sd_hash</label>
+      <input id="sd" type="text" placeholder="SHA-384 hex of stream descriptor" autocomplete="off" />
+
+      <label for="key">Stream key (hex) — optional if embedded in demo sd</label>
+      <input id="key" type="text" placeholder="Usually in fixtures/demo/DEMO.json" autocomplete="off" />
+
+      <button id="go" type="button">Fetch, verify, play</button>
+      <div id="status" class="status"></div>
+      <div id="player"></div>
+    </div>
+
+    <div class="card">
+      <strong>How to run</strong>
+      <ul>
+        <li><code>cargo run --release -- pack --input your.wav</code></li>
+        <li><code>cargo run --release -- superpeer --blobs fixtures/demo</code> → copy ticket</li>
+        <li><code>cargo run --release -- companion</code> → open this page</li>
+      </ul>
+      <p class="sub" style="margin:0">
+        Spec: <a href="../../research/scoped-mvp-browser-superpeer/">scoped MVP</a>
+        · Protocol notes in <code>docs/PROTOCOL.md</code>
+      </p>
+    </div>
+  </main>
+  <script>
+    const statusEl = document.getElementById("status");
+    const playerEl = document.getElementById("player");
+    const btn = document.getElementById("go");
+
+    function setStatus(text, cls) {
+      statusEl.textContent = text;
+      statusEl.className = "status" + (cls ? " " + cls : "");
+    }
+
+    btn.addEventListener("click", async () => {
+      const ticket = document.getElementById("ticket").value.trim();
+      const sd_hash = document.getElementById("sd").value.trim();
+      const key = document.getElementById("key").value.trim();
+      if (!ticket || !sd_hash) {
+        setStatus("Ticket and sd_hash are required.", "err");
+        return;
+      }
+      btn.disabled = true;
+      playerEl.innerHTML = "";
+      setStatus("Connecting via companion → Iroh superpeer… verifying LBRY hashes…");
+      try {
+        const res = await fetch("/api/play", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ticket, sd_hash, key: key || null }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || JSON.stringify(data));
+        }
+        setStatus(
+          data.message + "\n" +
+          "File: " + data.filename + " (" + data.bytes + " bytes, " + data.content_blobs + " content blobs)\n" +
+          "Serving " + data.media_path,
+          "ok"
+        );
+        const url = data.media_path;
+        const lower = (data.filename || "").toLowerCase();
+        if (lower.endsWith(".mp4") || lower.endsWith(".webm")) {
+          playerEl.innerHTML = "<video controls src=\"" + url + "\"></video>";
+        } else if (lower.endsWith(".wav") || lower.endsWith(".mp3") || lower.endsWith(".ogg")) {
+          playerEl.innerHTML = "<audio controls src=\"" + url + "\"></audio>";
+        } else {
+          playerEl.innerHTML = "<p><a href=\"" + url + "\" download>Download assembled file</a></p>";
+        }
+      } catch (e) {
+        setStatus(String(e.message || e), "err");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
