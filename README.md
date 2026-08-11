@@ -9,6 +9,7 @@ Public research write-ups produced with Grok for LBRY-related questions and comm
 | Topic | Date | Summary |
 |-------|------|---------|
 | [Iroh × LBRY blobs × WASM web](./research/iroh-lbry-video-streaming/) | 2026-08-11 | Using Iroh for video streaming and what a revision of LBRY’s blob system could look like with e2e relays and browser WASM, vs WebTorrent-style BT-over-WebRTC |
+| [Unification of pcfreak30’s ideas → MVP](./research/unification-of-pcfreak30-ideas/) | 2026-08-11 | Digest of pcfreak30’s Iroh/web chat notes, unified with the prior report, assessment, and an MVP-shaped gap-fill in complete sentences |
 
 ## Publishing rules
 
