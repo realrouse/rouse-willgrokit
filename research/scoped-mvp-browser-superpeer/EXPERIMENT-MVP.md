@@ -1,6 +1,6 @@
 # Experiment MVP: browser end user and LBRY download superpeer over Iroh
 
-**Date:** 2026-08-11  
+**Date:** 2026-08-11 (language-boundary addendum 2026-08-12)  
 **Status:** Scoped experiment definition (not an implementation)  
 **Audience:** pcfreak30, rouse, anyone who wants a buildable prototype boundary  
 **Style:** Complete sentences throughout.
@@ -41,7 +41,7 @@ Monetization remains an open problem and is **out of scope** for this experiment
 
 4. **Iroh connectivity.** Dial by endpoint identity, use relays for browser and hard NAT cases, prefer direct paths between native nodes when available. Relays must be treated as **e2e encrypted bit pipes**, not as content hosts.
 
-5. **Verification.** The browser (or a thin WASM/helper path) checks that received blob bytes match the expected LBRY blob hashes before decrypt or play.
+5. **Verification.** The client checks that received blob bytes match the expected LBRY blob hashes before decrypt or play. Existing **liblbry** / **@lumeweb/lbry-sdk** logic may supply parse-and-verify behavior; a small Rust port is an alternative. Language choice is an implementation detail, not a change to the experiment goals (see Section 3.5).
 
 6. **Minimal provider advertisement.** Enough for the browser to know **which superpeer to dial** for this experiment (pasteable ticket, config file, or one-line endpoint id). Full decentralized discovery can wait.
 
@@ -101,6 +101,32 @@ An Iroh relay (public for toy tests, dedicated for a serious demo) helps the bro
 ### 3.4 Optional later: browser leecher as mini-peer
 
 After the MVP works, a second experiment can allow a browser that already holds verified blobs to **offer them** to other browsers (true web mesh / P2P CDN behavior). That step needs careful product and legal thinking, plus likely service worker storage quotas. It is **phase two**, not phase one.
+
+### 3.5 Language boundaries (pcfreak30 addendum: liblbry / lbry-sdk vs Rust)
+
+pcfreak30 noted that **liblbry** (Go) or **@lumeweb/lbry-sdk** (TypeScript) can already cover parts of **stream descriptor parsing, blob hash verification, and decrypt**, while the new work is mostly **transport and superpeer shape**. He also flagged doubt that a **WASM → JavaScript → WASM** sandwich is a good idea, and left open whether a **Rust port** of the blob-verify path might be cleaner next to Iroh. That detail does **not** change the MVP roles (browser leecher, download superpeer, keep blob identity, no chain work). It only constrains **how** you assemble the client without inventing blob crypto twice.
+
+**Recommended default for the experiment (minimize crossing):**
+
+| Piece | Prefer | Why |
+|-------|--------|-----|
+| **Iroh connectivity + superpeer** | **Rust** (native binary; optional thin companion for the page) | Iroh’s home language; avoids fighting WASM twice for networking. |
+| **Sd parse, LBRY hash verify, decrypt** | **Same process as the bytes land**, when practical | Avoid ferrying multi-megabyte blobs through extra language boundaries just to checksum them. |
+| **Browser UI** | **TypeScript / ordinary web** | Page, progress, `<video>`; talks to companion over localhost **or** to a single WASM module if you deliberately choose pure web. |
+
+**Paths that are valid but ordered by integration risk:**
+
+1. **Lowest risk for a first demo (recommended):** Rust superpeer serves blobs over Iroh. A small **Rust companion** (or the same binary in “client mode”) fetches over Iroh, runs verify/decrypt either with a **minimal Rust reimplementation of the hash/decrypt steps** or another simple native path, then exposes **HTTP range or a finished media file** to the browser page. The page never needs WASM Iroh. liblbry and lbry-sdk are used as **reference oracles** (fixtures and test vectors) even if not linked into the browser.
+
+2. **Reuse TypeScript SDK in the page:** Browser (or extension) uses **@lumeweb/lbry-sdk** for parse/verify/decrypt after bytes arrive. Bytes arrive via companion HTTP or via WASM Iroh. This reuses existing web-oriented work and is attractive if the SDK is already trusted for blob math. Cost: you must not accidentally design a hot path that is **WASM Iroh → JS copies → another WASM crypto module** for every chunk without measuring it.
+
+3. **Reuse liblbry via Go/WASM:** Possible in principle for verify/decrypt in-browser, but **WASM → JS → WASM** (Iroh in Rust-WASM plus liblbry in Go-WASM, glued by JS) is the path pcfreak30 is rightly suspicious of. Treat it as **research**, not the default MVP architecture. If liblbry is used, prefer it **native** (sidecar or superpeer-adjacent) rather than double-WASM in the tab.
+
+4. **Full Rust port of blob verify next to Iroh:** Attractive once the demo works and you want one binary language for seeder and client. A small port is acceptable for an experiment if tests compare against liblbry or SDK vectors; production hardness can come later.
+
+**Decision rule for implementers:** If a design requires large blob bodies to cross a language boundary more than once per download, stop and simplify. Verification is cheap compared to transport; **copying** is not. The strategic claim that this path can support **Odysee-like viewing without the classical centralized blob servers** still holds: the missing piece is the **new approach** (Iroh download peers plus a browser-facing path), not a third rewrite of SHA-384. Language boundaries are where prototypes usually die; keep them few.
+
+**What “everything is there” means here:** blob identity and verify rules exist; Iroh exists for web-friendly connectivity; superpeers can hold bytes; optional later chain or Urma glue can resolve what to play. The experiment only has to **join transport to verify without a datacenter reflector as the only path.**
 
 ---
 
@@ -182,12 +208,14 @@ The experiment succeeds if all of the following are true in a recorded run:
 ### Slice B — Stream assembly without UI
 
 - Given `sd_hash`, fetch sd blob, parse JSON, fetch all content blobs, verify, decrypt if needed, write output file.  
-- Prove the blob system is intact end to end over Iroh.
+- Prove the blob system is intact end to end over Iroh.  
+- Prefer verify/decrypt in the **same native process** that received the bytes; use liblbry or lbry-sdk outputs as **test oracles** if you port logic.
 
 ### Slice C — Browser end user
 
 - Minimal page: inputs for ticket, `sd_hash`, optional key.  
-- Either WASM Iroh or companion HTTP bridge.  
+- Default: **companion HTTP bridge** (Rust client mode) so the tab is not a WASM→JS→WASM project on day one.  
+- Optional stretch: pure WASM Iroh and/or in-page **@lumeweb/lbry-sdk** verify, measured under real blob sizes.  
 - Progress UI and `<video>` or download link.  
 - This is the slice that makes the experiment legible to non-protocol people.
 
@@ -221,6 +249,8 @@ Stop after Slice C+D unless energy remains. Do not start browser mesh CDN until 
 
 **WASM maturity.** If pure browser Iroh cannot yet move large media comfortably, the companion bridge is a valid experimental scaffold, not a moral failure.
 
+**Language-boundary thrash.** Reusing liblbry or lbry-sdk is encouraged for correctness, not as a requirement to chain multiple WASM runtimes in one page. Prefer one networking language and one verify path per process.
+
 ---
 
 ## 10. Relationship to earlier write-ups
@@ -240,7 +270,7 @@ If the two docs appear to disagree, **this scoped experiment wins for what to bu
 
 ## 11. One-paragraph summary for Discord
 
-We should run a tight experiment that keeps LBRY’s blob and sdhash model exactly as content identity, and only replaces the painful part: getting those blobs into a browser without classical desktop LBRY. A native superpeer acts as a normal download peer that already has blobs and serves them over Iroh, including through end-to-end encrypted relays when the browser cannot punch UDP. The browser (or a tiny companion that still feels like a web workflow) verifies hashes and plays media. No new chain protocol, no upload reflector product, and no requirement that browsers re-seed each other yet. If that demo works, we have proven the secondary web-friendly P2P path; browser-to-browser CDN and privacy transports can be later experiments.
+We should run a tight experiment that keeps LBRY’s blob and sdhash model exactly as content identity, and only replaces the painful part: getting those blobs into a browser without classical desktop LBRY. A native superpeer acts as a normal download peer that already has blobs and serves them over Iroh, including through end-to-end encrypted relays when the browser cannot punch UDP. The browser (or a tiny companion that still feels like a web workflow) verifies hashes and plays media. Existing liblbry or lbry-sdk work can supply or oracle the verify path; a small Rust port next to Iroh is fine if it avoids awkward WASM-to-JS-to-WASM glue. No new chain protocol, no upload reflector product, and no requirement that browsers re-seed each other yet. If that demo works, we have proven a path toward Odysee-like viewing without depending only on centralized blob servers; browser-to-browser CDN and privacy transports can be later experiments.
 
 ---
 
